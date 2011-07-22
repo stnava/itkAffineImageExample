@@ -14,3 +14,10 @@ Author
 
 Brian Avants
 
+
+# created initial repository locally
+# did some stuff 
+# created repo at github, then: 
+# git remote add origin git@github.com:stnava/itkAffineImageExample.git
+# git push -u origin master
+
