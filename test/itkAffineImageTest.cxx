@@ -19,6 +19,8 @@
 #pragma warning ( disable : 4786 )
 #endif
 #include "itkDemonsRegistrationFilter.h"
+#include "itkImageFileReader.h"
+#include "itkImageFileWriter.h"
 
 #include "itkIndex.h"
 #include "itkImageRegionIteratorWithIndex.h"
@@ -58,9 +60,9 @@ void
 FillWithEllipse(
 TImage * image,
 double * center,
-double radius,
+double radius, double c, 
 typename TImage::PixelType foregnd,
-typename TImage::PixelType backgnd )
+typename TImage::PixelType backgnd)
 {
 
   typedef itk::ImageRegionIteratorWithIndex<TImage> Iterator;
@@ -68,7 +70,6 @@ typename TImage::PixelType backgnd )
   it.Begin();
 
   typename TImage::IndexType index;
-  double c=5; 
   for( ; !it.IsAtEnd(); ++it )
     {
     index = it.GetIndex();
@@ -104,7 +105,7 @@ TImage *output )
 int itkAffineImageTest(int, char* [] )
 {
 
-  typedef unsigned char PixelType;
+  typedef float PixelType;
   enum {ImageDimension = 2};
   typedef itk::Image<PixelType,ImageDimension> ImageType;
   typedef itk::Vector<float,ImageDimension> VectorType;
@@ -147,16 +148,27 @@ int itkAffineImageTest(int, char* [] )
 
   double center[ImageDimension];
   double radius;
-  PixelType fgnd = 250;
-  PixelType bgnd = 15;
+  PixelType fgnd = 1;
+  PixelType bgnd = 0;
 
   // fill moving with circle
   center[0] = 64; center[1] = 64; radius = 30;
-  FillWithEllipse<ImageType>( moving, center, radius, fgnd, bgnd );
+  FillWithEllipse<ImageType>( moving, center, radius, 20 , fgnd, bgnd );
 
   // fill fixed with circle
-  center[0] = 62; center[1] = 64; radius = 32;
-  FillWithEllipse<ImageType>( fixed, center, radius, fgnd, bgnd );
+  center[0] = 64; center[1] = 64; radius = 30;
+  FillWithEllipse<ImageType>( fixed, center, radius, 0, fgnd, bgnd );
+
+  typedef itk::ImageFileWriter< ImageType >  WriterType;
+  WriterType::Pointer      writer =  WriterType::New();
+  writer->SetFileName( "zfixed.nii.gz" );
+  writer->SetInput( fixed );
+  writer->Update();
+  WriterType::Pointer      writer2 =  WriterType::New();
+  writer2->SetFileName( "zmoving.nii.gz" );
+  writer2->SetInput( moving );
+  writer2->Update();
+
 
   // fill initial deformation with zero vectors
   VectorType zeroVec;
