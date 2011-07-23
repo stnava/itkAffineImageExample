@@ -181,6 +181,7 @@ int itkAffineImageTest(int, char* [] )
   double error_index_space=0;
   double error_physical_space=0;
   unsigned int ct=0;
+  fixedIter.GoToBegin();
   while( !fixedIter.IsAtEnd() )
     {
       error_index_space+=fabs(fixedIter.Get()-fixed_resampled->GetPixel(fixedIter.GetIndex()));
@@ -198,7 +199,7 @@ int itkAffineImageTest(int, char* [] )
       ++fixedIter;
     }
 
-  std::cout << "Average difference in index space : " <<error_index_space/(float)ct ;
+  std::cout << "Average difference in index space : " <<error_index_space/(float)ct <<std::endl;
   std::cout << "Average difference in phys space : " <<error_physical_space/(float)ct ;
   std::cout << std::endl;
 
@@ -207,6 +208,61 @@ int itkAffineImageTest(int, char* [] )
   writer3->SetFileName( "zfixed_resampled.nii.gz" );
   writer3->SetInput( fixed_resampled );
   writer3->Update();
+
+  std::cout <<" write a z*** nrrd image for comparison " << std::endl;
+  WriterType::Pointer      writer4 =  WriterType::New();
+  writer4->SetFileName( "zfixed_resampled.nrrd" );
+  writer4->SetInput( fixed_resampled );
+  writer4->Update();
+
+  typedef itk::ImageFileReader<ImageType> ReaderType;
+  ReaderType::Pointer nrrdReader = ReaderType::New();
+  nrrdReader->SetFileName("zfixed_resampled.nrrd");
+  nrrdReader->Update();
+  ReaderType::Pointer niftiReader = ReaderType::New();
+  niftiReader->SetFileName("zfixed_resampled.nii.gz");
+  niftiReader->Update();
+  ReaderType::Pointer mhdReader = ReaderType::New();
+  mhdReader->SetFileName("zfixed_resampled.mhd");
+  mhdReader->Update();
+
+  double merror_physical_space=0;
+  double nrerror_physical_space=0;
+  double nferror_physical_space=0;
+  fixedIter.GoToBegin();
+  while( !fixedIter.IsAtEnd() )
+    {
+      ImageType::PointType point;
+      fixed->TransformIndexToPhysicalPoint(fixedIter.GetIndex(), point);
+
+      interpolator->SetInputImage( nrrdReader->GetOutput() );
+      if ( interpolator->IsInsideBuffer(point) )
+      {
+        double value = interpolator->Evaluate(point);
+        nrerror_physical_space+=fabs(fixedIter.Get()-value);
+      }
+
+      interpolator->SetInputImage( niftiReader->GetOutput() );
+      if ( interpolator->IsInsideBuffer(point) )
+      {
+        double value = interpolator->Evaluate(point);
+        nferror_physical_space+=fabs(fixedIter.Get()-value);
+      }
+
+      interpolator->SetInputImage( mhdReader->GetOutput() );
+      if ( interpolator->IsInsideBuffer(point) )
+      {
+        double value = interpolator->Evaluate(point);
+        merror_physical_space+=fabs(fixedIter.Get()-value);
+      }
+      ++fixedIter;
+    }
+
+  std::cout << "Average difference in index space : " <<error_index_space/(float)ct << std::endl;
+  std::cout << "Average difference in phys space mhd : " <<merror_physical_space/(float)ct  << std::endl;
+  std::cout << "Average difference in phys space nrrd : " <<nrerror_physical_space/(float)ct  << std::endl;
+  std::cout << "Average difference in phys space nii : " <<nferror_physical_space/(float)ct  << std::endl;
+  std::cout << std::endl;
 
   if ( error_physical_space/(float)ct > 0.05 ) return EXIT_FAILURE;
   std::cout << "Test passed" << std::endl;
