@@ -264,6 +264,10 @@ int itkAffineImageTest(int, char* [] )
   std::cout << "Average difference in phys space nii : " <<nferror_physical_space/(float)ct  << std::endl;
   std::cout << std::endl;
 
+  std::cout <<" mhd direction " <<  mhdReader->GetOutput()->GetDirection() << std::endl;
+  std::cout <<" nrrd direction " <<  nrrdReader->GetOutput()->GetDirection() << std::endl;
+  std::cout <<" nii direction " <<  niftiReader->GetOutput()->GetDirection() << std::endl;
+
   if ( error_physical_space/(float)ct > 0.05 ) return EXIT_FAILURE;
   std::cout << "Test passed" << std::endl;
   return EXIT_SUCCESS;

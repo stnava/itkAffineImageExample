@@ -1,6 +1,6 @@
 This is a module for ITK: The Insight Toolkit for Segmentation and
 Registration. It is designed to work with the ITKv4 modular system and
-be places it ITK/Modules/External
+be placed it ITK/Modules/External
 
 License
 -------
@@ -20,4 +20,36 @@ Brian Avants
 # created repo at github, then: 
 # git remote add origin git@github.com:stnava/itkAffineImageExample.git
 # git push -u origin master
+
+
+This example project produces, internally, an initial reference image with an affine direction matrix and a translation defining its physical space.   We then transform this image with a known affine transformation.  We propagate the known affine transformation back into the image header and compute the index space and physical space intensity difference.  The index space intensity difference between these two images should be large while the physical space intensity difference should be small.  We test this, first, without using any I/O and verify that the intensity difference is due only to interpolation.  We then write the resampled image with an affine matrix in its header out into three file formats: nii.gz, mhd and nrrd.  We read these back in and perform the same intensity difference test.   The results of this test show:
+
+Average difference in index space : 0.806789      # as expected 
+Average difference in phys space mhd : 0.0167048  # correct
+Average difference in phys space nrrd : 0.0167048 # correct, kind of. 
+Average difference in phys space nii : 0.233459   # wrong.
+
+This makes it appear as though nrrd and mhd do the same thing, but they don't.  Observe the direction matrices:
+
+mhd header direction matrix is correct:  (determinant = -1.1 ) 
+-1.095 0.1
+0.05 1
+
+nii.gz header direction matrix not correct: (determinant -0.99854)
+-0.997362 0.0725856
+0.0725856 0.997362
+
+nrdd header direction matrix not correct: (determinant = -1 ) 
+-0.998959 0.0995037
+0.0456146 0.995037
+
+
+So something different is happening in each case.   This can be seen by viewing the output images:  
+
+zfixed.mhd		
+zfixed_resampled.mhd	
+zfixed_resampled.nrrd
+zfixed_resampled.nii.gz	
+
+in a viewer such as ITK-SNAP.  
 
