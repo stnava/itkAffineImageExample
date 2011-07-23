@@ -25,34 +25,16 @@
 #include "itkIndex.h"
 #include "itkImageRegionIteratorWithIndex.h"
 #include "itkWarpImageFilter.h"
+#include "itkLinearInterpolateImageFunction.h"
 #include "itkNearestNeighborInterpolateImageFunction.h"
 #include "itkCommand.h"
 #include "vnl/vnl_math.h"
 #include "itkVectorCastImageFilter.h"
-
-
+#include "itkAffineTransform.h"
+#include "itkResampleImageFilter.h"
 namespace{
 // The following class is used to support callbacks
 // on the filter in the pipeline that follows later
-template<typename TRegistration>
-class ShowProgressObject
-{
-public:
-  ShowProgressObject(TRegistration* o)
-    {m_Process = o;}
-  void ShowProgress()
-    {
-    std::cout << "Progress: " << m_Process->GetProgress() << "  ";
-    std::cout << "Iter: " << m_Process->GetElapsedIterations() << "  ";
-    std::cout << "Metric: "   << m_Process->GetMetric()   << "  ";
-    std::cout << "RMSChange: " << m_Process->GetRMSChange() << "  ";
-    std::cout << std::endl;
-    if ( m_Process->GetElapsedIterations() == 150 )
-      { m_Process->StopRegistration(); }
-    }
-  typename TRegistration::Pointer m_Process;
-};
-}
 
 // Template function to fill in an image with a circle.
 template <class TImage>
@@ -85,21 +67,6 @@ typename TImage::PixelType backgnd)
 }
 
 
-// Template function to copy image regions
-template <class TImage>
-void
-CopyImageBuffer(
-TImage *input,
-TImage *output )
-{
-  typedef itk::ImageRegionIteratorWithIndex<TImage> Iterator;
-  Iterator inIt( input, output->GetBufferedRegion() );
-  Iterator outIt( output, output->GetBufferedRegion() );
-  for( ; !inIt.IsAtEnd(); ++inIt, ++outIt )
-    {
-    outIt.Set( inIt.Get() );
-    }
-
 }
 
 int itkAffineImageTest(int, char* [] )
@@ -130,233 +97,120 @@ int itkAffineImageTest(int, char* [] )
   region.SetSize( size );
   region.SetIndex( index );
 
-  ImageType::Pointer moving = ImageType::New();
+  ImageType::Pointer fixed_resampled;
   ImageType::Pointer fixed = ImageType::New();
-  FieldType::Pointer initField = FieldType::New();
-
-  moving->SetLargestPossibleRegion( region );
-  moving->SetBufferedRegion( region );
-  moving->Allocate();
 
   fixed->SetLargestPossibleRegion( region );
   fixed->SetBufferedRegion( region );
   fixed->Allocate();
-
-  initField->SetLargestPossibleRegion( region );
-  initField->SetBufferedRegion( region );
-  initField->Allocate();
 
   double center[ImageDimension];
   double radius;
   PixelType fgnd = 1;
   PixelType bgnd = 0;
 
-  // fill moving with circle
-  center[0] = 64; center[1] = 64; radius = 30;
-  FillWithEllipse<ImageType>( moving, center, radius, 20 , fgnd, bgnd );
-
   // fill fixed with circle
   center[0] = 64; center[1] = 64; radius = 30;
   FillWithEllipse<ImageType>( fixed, center, radius, 0, fgnd, bgnd );
+  /** define a non-identity direction matrix in the fixed image */
+  ImageType::DirectionType direction=fixed->GetDirection( );
+  direction[0][0]=-1;
+  direction[1][0]=0.05;
+  fixed->SetDirection(direction);
+  double transx=30;
+  ImageType::PointType ftranslation;  ftranslation.Fill(0); ftranslation[1]=transx;
+  fixed->SetOrigin(ftranslation);
 
+  /** transform the fixed by a known affine transform */  
+  typedef itk::AffineTransform< double, ImageDimension > TransformType;
+  TransformType::Pointer      transform     = TransformType::New();
+  transform->SetIdentity();
+  TransformType::ParametersType params=transform->GetParameters();
+  params[0]=1.1;
+  params[1]=0.1;
+  double transy=20;
+  params[5]=transy;
+  transform->SetParameters(params);
+  typedef itk::ResampleImageFilter< ImageType, ImageType > ResamplerType;
+  ResamplerType::Pointer resampler = ResamplerType::New();
+  resampler->SetInput( fixed );
+  resampler->SetTransform( transform );
+  resampler->SetSize( fixed->GetLargestPossibleRegion().GetSize() );
+  resampler->SetOutputOrigin(fixed->GetOrigin() );
+  resampler->SetOutputSpacing(fixed->GetSpacing() );
+  resampler->SetOutputDirection(fixed->GetDirection());
+  resampler->SetDefaultPixelValue( 0 );
+  resampler->Update();
+  fixed_resampled=resampler->GetOutput();
+  /** At this point, fixed_resampled is no longer aligned with fixed in physical space. */
+
+  /* But now, we put the affine transform back into the resampled image... */
+  fixed_resampled->SetDirection( transform->GetMatrix() * fixed->GetDirection() );
+  ImageType::PointType translation;  
+  translation.Fill(0); 
+  translation[1]=transy;
+  itk::Vector<double, 2> fixed_origin;
+  for (unsigned int i=0; i<ImageDimension; i++) fixed_origin[i]=fixed->GetOrigin()[i];
+  itk::Vector<double, 2> transformed_fixed_origin=transform->GetMatrix() * fixed_origin;
+  for (unsigned int i=0; i<ImageDimension; i++) 
+    translation[i]=transformed_fixed_origin[i]+translation[i];
+  fixed_resampled->SetOrigin(translation);
+
+  /** open the images written out below in ITK-SNAP to see that they are aligned, but in different physical space*/
   typedef itk::ImageFileWriter< ImageType >  WriterType;
   WriterType::Pointer      writer =  WriterType::New();
-  writer->SetFileName( "zfixed.nii.gz" );
+  writer->SetFileName( "zfixed.mhd" );
   writer->SetInput( fixed );
   writer->Update();
   WriterType::Pointer      writer2 =  WriterType::New();
-  writer2->SetFileName( "zmoving.nii.gz" );
-  writer2->SetInput( moving );
+  writer2->SetFileName( "zfixed_resampled.mhd" );
+  writer2->SetInput( fixed_resampled );
   writer2->Update();
 
-
-  // fill initial deformation with zero vectors
-  VectorType zeroVec;
-  zeroVec.Fill( 0.0 );
-  initField->FillBuffer( zeroVec );
-
-  typedef itk::VectorCastImageFilter<FieldType,FieldType> CasterType;
-  CasterType::Pointer caster = CasterType::New();
-  caster->SetInput( initField );
-  caster->InPlaceOff();
-
-  //-------------------------------------------------------------
-  std::cout << "Run registration and warp moving" << std::endl;
-
-  typedef itk::DemonsRegistrationFilter<ImageType,ImageType,FieldType>
-    RegistrationType;
-  RegistrationType::Pointer registrator = RegistrationType::New();
-
-  registrator->SetInitialDeformationField( caster->GetOutput() );
-  registrator->SetMovingImage( moving );
-  registrator->SetFixedImage( fixed );
-  registrator->SetNumberOfIterations( 200 );
-  registrator->SetStandardDeviations( 1.0 );
-  registrator->SetMaximumError( 0.08 );
-  registrator->SetMaximumKernelWidth( 10 );
-  registrator->SetIntensityDifferenceThreshold( 0.001 );
-
-  // turn on inplace execution
-  registrator->InPlaceOn();
-
-  // turn on/off use moving image gradient
-  registrator->UseMovingImageGradientOff();
-
-  typedef RegistrationType::DemonsRegistrationFunctionType FunctionType;
-  FunctionType * fptr;
-  fptr = dynamic_cast<FunctionType *>(
-    registrator->GetDifferenceFunction().GetPointer() );
-  fptr->Print( std::cout );
-
-  // exercise other member variables
-  std::cout << "No. Iterations: " << registrator->GetNumberOfIterations() << std::endl;
-  std::cout << "Max. kernel error: " << registrator->GetMaximumError() << std::endl;
-  std::cout << "Max. kernel width: " << registrator->GetMaximumKernelWidth() << std::endl;
-
-  double v[ImageDimension];
-  for ( unsigned int j = 0; j < ImageDimension; j++ )
-    {
-    v[j] = registrator->GetStandardDeviations()[j];
-    }
-  registrator->SetStandardDeviations( v );
-
-  typedef ShowProgressObject<RegistrationType> ProgressType;
-  ProgressType progressWatch(registrator);
-  itk::SimpleMemberCommand<ProgressType>::Pointer command;
-  command = itk::SimpleMemberCommand<ProgressType>::New();
-  command->SetCallbackFunction(&progressWatch,
-                               &ProgressType::ShowProgress);
-  registrator->AddObserver( itk::ProgressEvent(), command);
-
-  // warp moving image
-  typedef itk::WarpImageFilter<ImageType,ImageType,FieldType> WarperType;
-  WarperType::Pointer warper = WarperType::New();
-
-  typedef WarperType::CoordRepType CoordRepType;
-  typedef itk::NearestNeighborInterpolateImageFunction<ImageType,CoordRepType>
-    InterpolatorType;
-  InterpolatorType::Pointer interpolator = InterpolatorType::New();
-
-
-  warper->SetInput( moving );
-  warper->SetDeformationField( registrator->GetOutput() );
-  warper->SetInterpolator( interpolator );
-  warper->SetOutputSpacing( fixed->GetSpacing() );
-  warper->SetOutputOrigin( fixed->GetOrigin() );
-  warper->SetOutputDirection( fixed->GetDirection() );
-  warper->SetEdgePaddingValue( bgnd );
-
-  warper->Print( std::cout );
-
-  warper->Update();
-
-  // ---------------------------------------------------------
-  std::cout << "Compare warped moving and fixed." << std::endl;
+  std::cout << "Compare warped moving and fixed in index space and physical space. " << std::endl;
 
   // compare the warp and fixed images
-  itk::ImageRegionIterator<ImageType> fixedIter( fixed,
+  itk::ImageRegionIteratorWithIndex<ImageType> fixedIter( fixed,
       fixed->GetBufferedRegion() );
-  itk::ImageRegionIterator<ImageType> warpedIter( warper->GetOutput(),
-      fixed->GetBufferedRegion() );
+  typedef itk:: NearestNeighborInterpolateImageFunction<
+                                    ImageType,
+                                    double >             InterpolatorType;
+  InterpolatorType::Pointer   interpolator  = InterpolatorType::New();
+  interpolator->SetInputImage( fixed_resampled );
 
-  unsigned int numPixelsDifferent = 0;
+  double error_index_space=0;
+  double error_physical_space=0;
+  unsigned int ct=0;
   while( !fixedIter.IsAtEnd() )
     {
-    if( fixedIter.Get() != warpedIter.Get() )
+      error_index_space+=fabs(fixedIter.Get()-fixed_resampled->GetPixel(fixedIter.GetIndex()));
+      ImageType::PointType point;
+      fixed->TransformIndexToPhysicalPoint(fixedIter.GetIndex(), point);
+
+      // now do physical space
+      if ( interpolator->IsInsideBuffer(point) )
       {
-      numPixelsDifferent++;
+        double value = interpolator->Evaluate(point);
+        error_physical_space+=fabs(fixedIter.Get()-value);
       }
-    ++fixedIter;
-    ++warpedIter;
+      // Check boundaries and assign
+      if ( fixedIter.Get() > 0 ) ct++;
+      ++fixedIter;
     }
 
-  std::cout << "Number of pixels different: " << numPixelsDifferent;
+  std::cout << "Average difference in index space : " <<error_index_space/(float)ct ;
+  std::cout << "Average difference in phys space : " <<error_physical_space/(float)ct ;
   std::cout << std::endl;
 
-  if( numPixelsDifferent > 10 )
-    {
-    std::cout << "Test failed - too many pixels different." << std::endl;
-    return EXIT_FAILURE;
-    }
+  std::cout <<" write a z*** nifti image for comparison " << std::endl;
+  WriterType::Pointer      writer3 =  WriterType::New();
+  writer3->SetFileName( "zfixed_resampled.nii.gz" );
+  writer3->SetInput( fixed_resampled );
+  writer3->Update();
 
-  registrator->Print( std::cout );
-
-  // -----------------------------------------------------------
-  std::cout << "Test running registrator without initial deformation field.";
-  std::cout << std::endl;
-
-  bool passed = true;
-  try
-    {
-    registrator->SetInput( NULL );
-    registrator->SetNumberOfIterations( 2 );
-    registrator->Update();
-    }
-  catch( itk::ExceptionObject& err )
-    {
-    std::cout << "Unexpected error." << std::endl;
-    std::cout << err << std::endl;
-    passed = false;
-    }
-
-  if ( !passed )
-    {
-    std::cout << "Test failed" << std::endl;
-    return EXIT_FAILURE;
-    }
-
-  //--------------------------------------------------------------
-  std::cout << "Test exception handling." << std::endl;
-
-  std::cout << "Test NULL moving image. " << std::endl;
-  passed = false;
-  try
-    {
-    registrator->SetInput( caster->GetOutput() );
-    registrator->SetMovingImage( NULL );
-    registrator->Update();
-    }
-  catch( itk::ExceptionObject & err )
-    {
-    std::cout << "Caught expected error." << std::endl;
-    std::cout << err << std::endl;
-    passed = true;
-    }
-
-  if ( !passed )
-    {
-    std::cout << "Test failed" << std::endl;
-    return EXIT_FAILURE;
-    }
-  registrator->SetMovingImage( moving );
-  registrator->ResetPipeline();
-
-  std::cout << "Test NULL moving image interpolator. " << std::endl;
-  passed = false;
-  try
-    {
-    fptr = dynamic_cast<FunctionType *>(
-      registrator->GetDifferenceFunction().GetPointer() );
-    fptr->SetMovingImageInterpolator( NULL );
-    registrator->SetInput( initField );
-    registrator->Update();
-    }
-  catch( itk::ExceptionObject & err )
-    {
-    std::cout << "Caught expected error." << std::endl;
-    std::cout << err << std::endl;
-    passed = true;
-    }
-
-  if ( !passed )
-    {
-    std::cout << "Test failed" << std::endl;
-    return EXIT_FAILURE;
-    }
-
+  if ( error_physical_space/(float)ct > 0.05 ) return EXIT_FAILURE;
   std::cout << "Test passed" << std::endl;
   return EXIT_SUCCESS;
-
 
 }
 
